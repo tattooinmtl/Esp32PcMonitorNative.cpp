@@ -1,0 +1,28 @@
+# Visual Studio user files and caches
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+
+# Build output and intermediate files
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+Win32/
+Esp32PcM.*/
+*.obj
+*.pdb
+*.idb
+*.ilk
+*.log
+*.tlog
+*.lastbuildstate
+*.recipe
+*.res
+
+# Windows
+Thumbs.db
+Desktop.ini
+
