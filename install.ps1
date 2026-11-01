@@ -36,18 +36,32 @@ $Settings  = New-ScheduledTaskSettingsSet `
     -RestartCount 10 `
     -RestartInterval (New-TimeSpan -Minutes 1)
 
-Register-ScheduledTask `
-    -TaskName $TaskName `
-    -Action $Action `
-    -Trigger $Trigger `
-    -Principal $Principal `
-    -Settings $Settings `
-    -Description "Sends PC CPU/RAM/disk usage to the ESP32 LCD over USB serial" `
-    -Force | Out-Null
-
-Start-ScheduledTask -TaskName $TaskName
+try {
+    Register-ScheduledTask `
+        -TaskName $TaskName `
+        -Action $Action `
+        -Trigger $Trigger `
+        -Principal $Principal `
+        -Settings $Settings `
+        -Description "Sends PC CPU/RAM/disk usage to the ESP32 LCD over USB serial" `
+        -Force | Out-Null
+    Start-ScheduledTask -TaskName $TaskName
+    $TaskOk = $true
+} catch {
+    # An existing task created from an admin window can't be replaced from a normal one
+    Start-Process -FilePath $ExePath -WorkingDirectory $InstallDir
+    $TaskError = $_.Exception.Message
+    $TaskOk = $false
+}
 
 Write-Host ""
-Write-Host "DONE. '$TaskName' is installed and running."
-Write-Host "It will start automatically every time you log in to Windows."
+if ($TaskOk) {
+    Write-Host "DONE. '$TaskName' is installed and running."
+    Write-Host "It will start automatically every time you log in to Windows."
+} else {
+    Write-Host "The exe was updated and is running, but the startup task could not be replaced:"
+    Write-Host "  $TaskError"
+    Write-Host "Run this same command again in PowerShell opened as Administrator to fix the task."
+}
+Write-Host "The ESP32 does not need to be plugged in; the app connects when it appears."
 Write-Host "Flash the ESP32 with firmware\NativeCVersionESP32_display if it is a new board."
