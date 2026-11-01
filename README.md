@@ -21,7 +21,36 @@ Upload and download values are included in the protocol for compatibility but ar
 - ESP32 firmware capable of reading the serial protocol described below
 - Visual Studio with the **Desktop development with C++** workload to build from source
 
-This repository contains the Windows sender application. It does not currently include the ESP32 display firmware.
+## Quick install (new PC or fresh Windows)
+
+Open PowerShell (no admin needed) and run:
+
+```powershell
+irm https://raw.githubusercontent.com/tattooinmtl/Esp32PcMonitorNative.cpp/main/install.ps1 | iex
+```
+
+This downloads the latest `Esp32PcMonitorNative.exe` from Releases to `C:\esp32_scripts`, registers the **ESP32 PC Monitor Native** logon task, and starts it.
+
+To remove it:
+
+```powershell
+irm https://raw.githubusercontent.com/tattooinmtl/Esp32PcMonitorNative.cpp/main/uninstall.ps1 | iex
+```
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `*.cpp`, `*.h`, `*.vcxproj`, `*.slnx` | Windows sender application (Visual Studio) |
+| `firmware/NativeCVersionESP32_display/` | Current ESP32-C6 + Waveshare 1.3" LCD dashboard sketch |
+| `firmware/PCRAMVIEWER/` | Earlier, simpler dashboard sketch |
+| `python-legacy/` | Original Python sender and its startup-task script |
+| `docs/` | Setup notes |
+| `install.ps1`, `uninstall.ps1` | One-line installer and remover |
+
+## ESP32 firmware
+
+Open `firmware/NativeCVersionESP32_display/NativeCVersionESP32_display.ino` in Arduino IDE, install the **GFX Library for Arduino** (`Arduino_GFX_Library`) library, select the ESP32-C6 board, and upload. Close the Serial Monitor afterwards so the PC app can use the COM port.
 
 ## Build
 

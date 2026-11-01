@@ -1,0 +1,319 @@
+Yes. Here's the exact sequence:
+
+Paste the ESP32 sketch into Arduino IDE.
+Upload it.
+Wait until you see:
+Hash of data verified.
+Hard resetting via RTS pin...
+
+That's success.
+
+Close the Serial Monitor if it's open. (This is important because Python needs COM4.)
+You do not need to press the RESET/RTS button. The upload already reset the ESP32 and started your new sketch.
+Open PowerShell and run:
+
+cd C:\esp32_scripts
+python pc_to_esp32_monitor.py
+
+If everything is correct, the Python script will open COM4 and start sending your PC's CPU and RAM usage to the ESP32, and the LCD should update every second.
+
+Before you run it
+Close the Arduino Serial Monitor (it must release COM4).
+Make sure the ESP32 is still connected on COM4.
+
+
+pc_to_esp32_monitor.py
+------------------------------------------------------------------------------------------------
+
+import time
+import ctypes
+import serial
+
+PORT = "COM4"
+BAUD = 115200
+
+class MEMORYSTATUSEX(ctypes.Structure):
+    _fields_ = [
+        ("dwLength", ctypes.c_ulong),
+        ("dwMemoryLoad", ctypes.c_ulong),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+class FILETIME(ctypes.Structure):
+    _fields_ = [
+        ("dwLowDateTime", ctypes.c_ulong),
+        ("dwHighDateTime", ctypes.c_ulong),
+    ]
+
+def filetime_to_int(ft):
+    return (ft.dwHighDateTime << 32) + ft.dwLowDateTime
+
+def get_ram():
+    mem = MEMORYSTATUSEX()
+    mem.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(mem))
+
+    total = mem.ullTotalPhys
+    avail = mem.ullAvailPhys
+    used = total - avail
+    percent = used * 100.0 / total
+
+    return percent, used / 1024**3, total / 1024**3
+
+def get_cpu_sample():
+    idle = FILETIME()
+    kernel = FILETIME()
+    user = FILETIME()
+    ctypes.windll.kernel32.GetSystemTimes(
+        ctypes.byref(idle),
+        ctypes.byref(kernel),
+        ctypes.byref(user)
+    )
+    return filetime_to_int(idle), filetime_to_int(kernel), filetime_to_int(user)
+
+def cpu_percent(prev, cur):
+    idle_prev, kernel_prev, user_prev = prev
+    idle_cur, kernel_cur, user_cur = cur
+
+    idle_delta = idle_cur - idle_prev
+    kernel_delta = kernel_cur - kernel_prev
+    user_delta = user_cur - user_prev
+
+    total = kernel_delta + user_delta
+    if total == 0:
+        return 0.0
+
+    return max(0.0, min(100.0, 100.0 * (1.0 - idle_delta / total)))
+
+with serial.Serial(PORT, BAUD, timeout=1) as ser:
+    time.sleep(2)
+    prev_cpu = get_cpu_sample()
+
+    while True:
+        time.sleep(1)
+        cur_cpu = get_cpu_sample()
+        cpu = cpu_percent(prev_cpu, cur_cpu)
+        prev_cpu = cur_cpu
+
+        ram_percent, ram_used, ram_total = get_ram()
+
+        line = f"CPU={cpu:.1f},RAM={ram_percent:.1f},USED={ram_used:.1f},TOTAL={ram_total:.1f}\n"
+        print(line.strip())
+        ser.write(line.encode("utf-8"))
+
+
+-----------------------------------------------------------------------------------------------------------------------------
+Arduino sketch .ino
+-----------------------------------------------------------------------------------------------------------------------------
+
+#include <Arduino.h>
+#include <Arduino_GFX_Library.h>
+
+#define BLACK 0x0000
+#define BLUE 0x001F
+#define GREEN 0x07E0
+#define CYAN 0x07FF
+#define RED 0xF800
+#define MAGENTA 0xF81F
+#define YELLOW 0xFFE0
+#define WHITE 0xFFFF
+#define ORANGE 0xFD20
+
+#define LCD_WIDTH 240
+#define LCD_HEIGHT 240
+#define LCD_SCLK 7
+#define LCD_MOSI 6
+#define LCD_DC 15
+#define LCD_CS 14
+#define LCD_RST 21
+#define LCD_BL 22
+
+Arduino_DataBus *bus = new Arduino_ESP32SPI(
+  LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, GFX_NOT_DEFINED
+);
+
+Arduino_GFX *gfx = new Arduino_ST7789(
+  bus, LCD_RST, 0, true, LCD_WIDTH, LCD_HEIGHT, 0, 0
+);
+
+String line = "";
+float pcCpu = 0;
+float pcRam = 0;
+float ramUsedGb = 0;
+float ramTotalGb = 0;
+unsigned long lastDraw = 0;
+
+void drawBar(int x, int y, int w, int h, float percent, uint16_t color) {
+  gfx->drawRect(x, y, w, h, WHITE);
+  int fillW = (int)((w - 2) * percent / 100.0);
+  fillW = constrain(fillW, 0, w - 2);
+  gfx->fillRect(x + 1, y + 1, fillW, h - 2, color);
+  gfx->fillRect(x + 1 + fillW, y + 1, (w - 2) - fillW, h - 2, BLACK);
+}
+
+void drawScreen() {
+  gfx->fillScreen(BLACK);
+
+  gfx->setTextSize(2);
+  gfx->setTextColor(CYAN);
+  gfx->setCursor(10, 10);
+  gfx->println("PC MONITOR");
+
+  gfx->setTextSize(1);
+  gfx->setTextColor(WHITE);
+  gfx->setCursor(10, 35);
+  gfx->println("Windows 11 Task Stats");
+
+  gfx->drawFastHLine(0, 52, 240, BLUE);
+
+  gfx->setTextSize(2);
+
+  gfx->setCursor(10, 70);
+  gfx->setTextColor(GREEN);
+  gfx->print("CPU ");
+  gfx->print(pcCpu, 1);
+  gfx->println("%");
+
+  drawBar(10, 100, 220, 20, pcCpu, GREEN);
+
+  gfx->setCursor(10, 135);
+  gfx->setTextColor(YELLOW);
+  gfx->print("RAM ");
+  gfx->print(pcRam, 1);
+  gfx->println("%");
+
+  drawBar(10, 165, 220, 20, pcRam, YELLOW);
+
+  gfx->setTextSize(1);
+  gfx->setCursor(10, 200);
+  gfx->setTextColor(WHITE);
+  gfx->print(ramUsedGb, 1);
+  gfx->print(" GB / ");
+  gfx->print(ramTotalGb, 1);
+  gfx->println(" GB");
+
+  gfx->setCursor(10, 220);
+  gfx->setTextColor(MAGENTA);
+  gfx->print("USB live feed OK");
+}
+
+void parseLine(String s) {
+  // Format: CPU=12.5,RAM=45.2,USED=14.4,TOTAL=31.8
+  int c1 = s.indexOf("CPU=");
+  int r1 = s.indexOf(",RAM=");
+  int u1 = s.indexOf(",USED=");
+  int t1 = s.indexOf(",TOTAL=");
+
+  if (c1 >= 0 && r1 > c1 && u1 > r1 && t1 > u1) {
+    pcCpu = s.substring(c1 + 4, r1).toFloat();
+    pcRam = s.substring(r1 + 5, u1).toFloat();
+    ramUsedGb = s.substring(u1 + 6, t1).toFloat();
+    ramTotalGb = s.substring(t1 + 7).toFloat();
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  pinMode(LCD_BL, OUTPUT);
+  digitalWrite(LCD_BL, HIGH);
+
+  gfx->begin();
+  drawScreen();
+}
+
+void loop() {
+  while (Serial.available()) {
+    char c = Serial.read();
+
+    if (c == '\n') {
+      parseLine(line);
+      line = "";
+      drawScreen();
+    } else if (c != '\r') {
+      line += c;
+    }
+  }
+}
+
+
+
+-----------------------------------------------------------------------
+
+auto start
+
+
+-------------------------------------------------------------------------
+C:\esp32_scripts\install_startup_task.ps1
+
+Paste this:
+
+$TaskName = "ESP32 PC Monitor"
+$ScriptPath = "C:\esp32_scripts\pc_to_esp32_monitor.py"
+$StartIn = "C:\esp32_scripts"
+
+if (!(Test-Path $ScriptPath)) {
+    Write-Host "ERROR: Python script not found:"
+    Write-Host $ScriptPath
+    pause
+    exit 1
+}
+
+$PythonPath = (Get-Command python.exe).Source
+
+if (!$PythonPath) {
+    Write-Host "ERROR: python.exe not found in PATH"
+    pause
+    exit 1
+}
+
+Write-Host "Using Python:"
+Write-Host $PythonPath
+
+$Action = New-ScheduledTaskAction `
+    -Execute $PythonPath `
+    -Argument "`"$ScriptPath`"" `
+    -WorkingDirectory $StartIn
+
+$Trigger = New-ScheduledTaskTrigger -AtLogOn
+
+$Settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -RestartCount 10 `
+    -RestartInterval (New-TimeSpan -Minutes 1)
+
+Register-ScheduledTask `
+    -TaskName $TaskName `
+    -Action $Action `
+    -Trigger $Trigger `
+    -Settings $Settings `
+    -Description "Starts ESP32 LCD PC CPU/RAM monitor at Windows login" `
+    -Force
+
+Write-Host ""
+Write-Host "DONE. Startup task installed:"
+Write-Host $TaskName
+Write-Host ""
+Write-Host "To test it now, run:"
+Write-Host "Start-ScheduledTask -TaskName `"$TaskName`""
+pause
+
+Run it in PowerShell:
+
+powershell -ExecutionPolicy Bypass -File C:\esp32_scripts\install_startup_task.ps1
+
+Then test immediately:
+
+Start-ScheduledTask -TaskName "ESP32 PC Monitor"
+
+To remove it later:
+
+Unregister-ScheduledTask -TaskName "ESP32 PC Monitor" -Confirm:$false
